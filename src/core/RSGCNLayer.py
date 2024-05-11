@@ -16,13 +16,15 @@ class RSGCNLayer(MessagePassing):
         """
         super(RSGCNLayer, self).__init__(aggr="add")
         self.dropout = dropout
-        self.lin_in = torch.nn.Linear(coors, hidden_size * in_channels)
-        self.lin_out = torch.nn.Linear(hidden_size * in_channels, out_channels)
-        self.lin_feature = torch.nn.Linear(in_channels, hidden_size * in_channels)
+        self.lin_pos = torch.nn.Linear(coors, 2 * hidden_size)
+        self.lin_pos_2 = torch.nn.Linear(2 * hidden_size, 2 * hidden_size)
+
+        self.lin_out = torch.nn.Linear(2 * hidden_size, out_channels)
+
         self.conv = torch.nn.Conv2d(
             in_channels=1,
             out_channels=32,
-            kernel_size=3,
+            kernel_size=5,
             stride=1,
             padding=1,
         )
@@ -30,32 +32,32 @@ class RSGCNLayer(MessagePassing):
         self.conv2 = torch.nn.Conv2d(
             in_channels=32,
             out_channels=32,
-            kernel_size=3,
+            kernel_size=5,
             stride=1,
             padding=1,
         )
 
-        self.conv_lin = torch.nn.Linear(int(12 * 12 * 32), hidden_size * in_channels)
+        self.conv_lin = torch.nn.Linear(int(11 * 11 * 32), 2 * hidden_size)
         self.max_pool = nn.MaxPool2d(2, 2)
         self.flatten = nn.Flatten()
 
         self.in_channels = in_channels
 
-    def forward(self, x, pos, region, edge_index):
+    def forward(self, x, pos, edge_index, node_region):
         """
         x - feature matrix of the whole graph [num_nodes, label_dim]
         pos - node position matrix [num_nodes, coors]
         edge_index - graph connectivity [2, num_edges]
         """
-        edge_index, _ = add_self_loops(
-            edge_index, num_nodes=x.size(0)
-        )  # num_edges = num_edges + num_nodes
+        # edge_index, _ = add_self_loops(
+        #     edge_index, num_nodes=x.size(0)
+        # )  # num_edges = num_edges + num_nodes
 
         return self.propagate(
             edge_index=edge_index,
             x=x,
             pos=pos,
-            region=torch.reshape(region, (region.size(0), -1)),
+            region=torch.reshape(node_region, (node_region.size(0), -1)),
             aggr="add",
         )  # [N, out_channels, label_dim]
 
@@ -67,30 +69,29 @@ class RSGCNLayer(MessagePassing):
         """
 
         relative_pos = pos_j - pos_i  # [n_edges, hidden_size * in_channels]
-        spatial_scaling = F.relu(
-            self.lin_in(relative_pos)
+        pos_feature = F.relu(
+            self.lin_pos_2(F.relu(self.lin_pos(relative_pos)))
         )  # [n_edges, hidden_size * in_channels]
+
+        # [n_edges, in_channels, ...] * [n_edges, in_channels, 1]
 
         region_j = torch.reshape(region_j, (region_j.size(0), 1, 50, 50))
         region_i = torch.reshape(region_i, (region_i.size(0), 1, 50, 50))
         region_spatial = region_j - region_i
-
         region_spatial = F.relu(self.conv(region_spatial))
         region_spatial = self.max_pool(region_spatial)
         region_spatial = F.relu(self.conv2(region_spatial))
         region_spatial = self.max_pool(region_spatial)
         region_spatial = self.flatten(region_spatial)
-        out_spatial = F.relu(self.conv_lin(region_spatial))
-        n_edges = spatial_scaling.size(0)
-        # [n_edges, in_channels, ...] * [n_edges, in_channels, 1]
+        regional_spatial = F.relu(self.conv_lin(region_spatial))
 
-        n_feature = F.relu(self.lin_feature(x_j))
-        n_feature = n_feature.reshape(n_edges, self.in_channels, -1)
+        n_edges = pos_feature.size(0)
 
-        spatial_scaling = spatial_scaling.reshape(n_edges, self.in_channels, -1)
-        out_spatial = out_spatial.reshape(n_edges, self.in_channels, -1)
+        pos_feature = pos_feature.reshape(n_edges, self.in_channels, -1)
+        regional_spatial = regional_spatial.reshape(n_edges, self.in_channels, -1)
+        x_j = x_j.reshape(n_edges, self.in_channels, -1)
 
-        result = spatial_scaling * out_spatial * n_feature
+        result = pos_feature * x_j * regional_spatial
         return result.view(n_edges, -1)
 
     def update(self, aggr_out):

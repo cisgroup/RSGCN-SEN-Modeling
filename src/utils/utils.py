@@ -5,7 +5,7 @@ from torch_geometric.data import Data
 import numpy as np
 from src.core.VanilaGCN import Model
 from src.core.SpatialGCN import SpatialGCNModel
-from src.core.ConvSpatial_single import RSGCNBlock
+from src.core.RSGCNModel import RSGCNModel
 
 
 def plot_a_sample(
@@ -144,7 +144,7 @@ def return_the_model(model_name, loss_name, valid, device, input_channels):
         model.to(device)
 
     elif model_name == "Convspatial":
-        model = RSGCNBlock(
+        model = RSGCNModel(
             input_channels=input_channels - 2, hidden_channels=128, sigmoid=sigmoid
         )
 
