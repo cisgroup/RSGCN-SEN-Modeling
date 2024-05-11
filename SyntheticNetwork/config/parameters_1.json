@@ -1,0 +1,1 @@
+{"model_name": "Spatialgcn", "loss_name": "BCE", "dataset_type": "Standard", "epoch": 1000}
